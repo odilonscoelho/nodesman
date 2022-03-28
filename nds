@@ -1,0 +1,274 @@
+#!/usr/bin/dash
+#
+node_id_yad ()
+{
+    # Caso a janela do yad esteja aberta não inicia uma nova;
+    [ -e $tmpdir/yad_selection ] && return 0
+
+    Transmissiongtk="#28292E"   ;   Gcolor2="#E9B435"           ;       mpv="#A41A97"           ;    gl="#A41A97" 
+    Googlechrome="#E7C306"      ;     kitty="#774321"           ;       qt5ct="#3FC74F"         ;   Lxappearance="#3FC74F" 
+    TelegramDesktop="#29A0D9"   ;  KotatogramDesktop="#29A0D9"  ;       Thunderbird="#1F5EB9"   ;   Steam="#1A4760" 
+    Firefox="#5C4DC7"           ;       firefox="#5C4DC7"       ;       qutebrowser="#C8DEF5"   ;   Nemo="#78BB40" 
+    qutebrowser="#C8DEF5"       
+
+    Transmissiongtk_icon=" "  ;     pulsemixer_icon="蓼"         ;       kitty_icon=" "          ;     qutebrowser_icon=" "
+    firefox_icon=" "          ; pulseaudioequalizergtk_icon="蓼" ;       Nitrogen_icon=" "       ;     Steam_icon=" "
+    nemo_icon=" "             ;        Nemo_icon=" "            ;         Nm_icon=" "           ;     Nvidia_icon="" 
+    qt5ct_icon=" "            ;    Lxappearance_icon=" "        ;    TelegramDesktop_icon=" "   ;     mpv_icon=" "
+    Xviewer_icon=" "          ;     csgo_linux64_icon="𥳐"       ; SimpleScreenRecorder_icon=" " ;     Gcolor2_icon=" "
+    Yad_icon=" "              ;      Gucharmap_icon=" "         ;       Thunderbird_icon=" "    ;     default_icon=" "
+    Pavucontrol_icon="蓼"
+
+    # Valores aproximados, casa com meu tema de ícones, dependendo do tema que usar
+    # vai ficar estranho, só testando pra ver;
+    case $(< $tmpdir/index wc -l) in
+        1 ) height=78 ;;        2 ) height=130 ;;        3 ) height=146 ;;       4 ) height=174 ;;
+        5 ) height=200 ;;       6 ) height=228 ;;        7 ) height=258 ;;       8 ) height=282 ;;
+        9 ) height=310 ;;       * ) height=720 ;;
+    esac
+
+    # Para contornar erro chato do gtk
+    exec 2>/dev/null 
+    # Para redirecionar as informações da linha selecionada, --selected-action
+    exec 1>$tmpdir/yad_selection
+    
+    while read line 
+    do 
+        id="${line%%|*}"
+        wk="${line#*|}" ; wk="${wk%%|*}"
+        pg="${line#*|*|}" ; pg="${pg%%|*}" 
+        eval icon=\$${pg}_icon
+        [ -z "$icon" ] && icon=$default_icon
+        hd="${line#*|*|*|}" ; hd="${hd%|*}"
+        st="${line##*|}"
+        eval foreground=\$$pg
+
+        printf '%s\n' "$id" "$icon" "$pg" "$wk" "$hd" "$st" "${foreground:-#ffffff}"
+
+    done < $tmpdir/index | \
+        yad                                                  \
+            --close-on-unfocus                               \
+            --buttons-layout=center                          \
+            --button="  !!hide selected:$0 hide"            \
+            --button="  !!set floating:$0 float"            \
+            --button="  !!set tiled:$0 tiled"               \
+            --button="  !!set fullscreen:$0 fullscreen"     \
+            --button="  !!close selected:$0 close"          \
+            --button="  !!set sticky toggle:$0 sticky"      \
+            --keep-icon-size                    \
+            --skip-taskbar                      \
+            --sticky                            \
+            --undecorated                       \
+            --on-top                            \
+            --borders=0                         \
+            --geometry=280x$height+0+0          \
+            --list                              \
+                --column "     ID"              \
+                --column "ICON"                 \
+                --column "CLASS"                \
+                --column "DESK"                 \
+                --column "  "                  \
+                --column "  "                  \
+                --column @fore@                 \
+                --search-column=3               \
+                --grid-lines both               \
+                --separator="|"                 \
+                --expand-column=3               \
+                --select-action="echo %s"
+
+    exec 1>&-
+    exec 2>&-
+
+}
+#
+start () 
+{
+    while true 
+    do
+        # Zera variável de comparação
+        unset scopeNew
+        # Os monitores foram salvos no arquivo $tmpdir/monitors
+        # Se houverem mais de um, a base contemplará todos
+        while read line
+        do 
+            # Se a variável for nula, salva apenas o resultado do comando
+            # caso contrário concatena com vírgula como separador entre os monitores
+            [ -z "$scopeNew" ] && 
+                scopeNew="$(bspc query --tree --monitor $line)" || 
+                    scopeNew="$scopeNew,$(bspc query --tree --monitor $line)"
+        done < $tmpdir/monitors
+        # Valida se houve alterações no escopo geral, 
+        # se não houve apenas aguarde o intervalo definido e continue o loop
+        # sem gerar informações novas;
+        if [ "$scopeNew" = "$scopeOld" ]
+        then
+            sleep $interval
+            continue
+        fi
+        # Se passou pela condição anterior é porque houve alterações
+        # exclui os arquivos que serão concatenados para gerar o index;
+        rm \
+            $tmpdir/ids_nodes $tmpdir/desktops $tmpdir/class_names $tmpdir/hidden_status \
+            $tmpdir/index $tmpdir/ids_desktops $tmpdir/sticky_status 2>/dev/null
+        # Gera uma nova base para trabalhar em todos os desktops
+        # retira as linhas em branco
+        # organiza as informações de cada desktop em uma linha;
+        printf '%s\n' "$scopeNew" \
+            | sed -E 's/\{|\}|\[|\]|"//g;s/:/\=/g;s/name=/\nname=/g' \
+            | sed 's/,$//g' > $tmpdir/scope
+            sed -Ei 's/^$//g' $tmpdir/scope
+        # Varre o arquivo $tmpdir/scope, e valida as informações :
+        # id desktop hidden_status sticky_status de cada janela;
+        while read line 
+        do
+            # As chaves são diferentes entre as linhas que demonstram infos dos monitores
+            # As chaves do json são diferentes entre desktops e monitores
+            # A chave retirada abaixo se casar com o case trata-se de um monitor então
+            # continue o loop sem separar nada, se for desktop separa a relação dos desktops e ids_nodes;
+            value="${line#*,*,*,*,*,*,*,}" ; value="${value%%,*}" ; value="${value%%=*}"
+            case $value in
+                focusedDesktopId) continue ;;
+                *) 
+                    eval "${line%%,*}"
+                    for cod in $(printf '%s\n' "$line" |grep -Eo 'id=\w+?')
+                    do 
+                        case "${cod##*=}" in 
+                            [0-9][0-9][0-9][0-9][0-9][0-9][0-9]) continue ;;
+                            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) 
+                                printf '%s\n' "$name" >> $tmpdir/desktops
+                                printf '%s\n' "${cod##*=}" >> $tmpdir/ids_nodes ;;
+                        esac
+                    done
+                    for class in $(printf '%s\n' "$line" | grep -Eo 'className=\w+?')
+                    do 
+                        printf '%s\n' "${class##*=}" >> $tmpdir/class_names
+                    done ;;
+            esac
+        done < $tmpdir/scope
+        # Varre o arquivo $tmpdir/ids_nodes, pelos ids dos nodes é possível
+        # capturar as infos de cada node aberto, verificar se é possível retirar os
+        # status sticky pela base scopeNew;
+        while read nodeId 
+        do
+            bspc query --tree --node $nodeId > $tmpdir/temp_file
+            grep -Eo 'hidden\":\w+?' $tmpdir/temp_file > $tmpdir/temp_file2
+            cut -d ':' -f 2 < $tmpdir/temp_file2 >> $tmpdir/hidden_status
+            grep -Eo 'sticky\":\w+?' $tmpdir/temp_file > $tmpdir/temp_file2
+            cut -d ':' -f 2 < $tmpdir/temp_file2 >> $tmpdir/sticky_status
+        done < $tmpdir/ids_nodes 
+        rm $tmpdir/temp_{file,file2} 2>/dev/null
+        # Concatena os arquivos base > index
+        paste -d "|"                 \
+            $tmpdir/ids_nodes        \
+            $tmpdir/desktops         \
+            $tmpdir/class_names      \
+            $tmpdir/hidden_status    \
+            $tmpdir/sticky_status > $tmpdir/index
+        # Limpa a variável de comparação e aguarda o intervalo definido para novo 
+        # ciclo;
+        scopeOld=$scopeNew          ; sleep $interval
+
+    done
+}
+#
+stop () 
+{ 
+    PID=$(pr -T $pid_backend 2>/dev/null)
+    rm $tmpdir/* 2>/dev/null
+    kill $PID 2>/dev/null
+    exit 0
+}
+# Automação de quase todas as opções
+autInit () 
+{
+    bspc node "${YAD_XID}" --close
+    id=$(tail -1 $tmpdir/yad_selection)
+}
+autEnd ()
+{
+    sleep $interval
+    sleep $interval
+    rm $tmpdir/yad_selection
+    $0 f
+}
+# Um diretório no tmp para os arquivos temporários;
+tmpdir=/tmp/bspcinfos
+# Se ainda não criado, criar o $tmpdir
+[ -d $tmpdir ] || mkdir $tmpdir
+# Arquivo pid_locked para não iniciar mais de uma vez
+# o backend
+pid_backend=$tmpdir/pid_backend
+# Seta um estado inicial para comparação
+scopeOld=""
+# Intervalo entre as comparações para verificar alterações;
+interval="0.25"
+# Para chamar o script apenas pelo nome para abrir o yad_selection
+[ -z "$1" ] && set f
+# Valida os parâmetros passados aos script, criar um help;
+case "$1" in
+
+    start )
+        bspc query --monitors > $tmpdir/monitors
+        [ -e $pid_backend ] && 
+                { printf '%s\n' "Em execução !" ; exit 1 ; } || 
+                    { $1 & printf '%s\n' "$!" > $pid_backend ; } ;;
+
+    stop ) $1 2>/dev/null ;;
+
+    * ) 
+        case "$1" in 
+            focus|f ) 
+                node_id_yad
+                base=$(tail -1 $tmpdir/yad_selection)
+                id="${base%%|*}"
+                hidden=${base#*|*|*|*|} ; hidden=${hidden%%|*}
+                case $hidden in 
+                   true ) 
+                       bspc node "$id" --flag hidden=off 
+                       bspc node "$id" --focus ;;
+                 
+                   false ) bspc node "$id" --focus ;;
+                esac
+                rm $tmpdir/yad_selection ;;
+            hide )
+                autInit
+                hidden="${id#* * * * * }" ; hidden="${hidden%% *}"
+                id="${id%% *}"
+                case $hidden in 
+                   false ) bspc node "$id" --flag hidden=on ;;                 
+                   true )
+                       bspc node "$id" --flag hidden=off
+                       bspc node "$id" --focus ;;
+                esac
+                autEnd ;;
+            sticky )
+                autInit
+                toggle="${id#* * * * * * }" ; toggle="${toggle% *}"
+                id="${id%% *}"
+                case $toggle in
+                    true ) bspc node "$id" --flag sticky=off ;;
+                    false ) bspc node "$id" --flag sticky=on ;;
+                esac
+                autEnd ;;
+            fullscreen )
+                autInit
+                id="${id%% *}"
+                bspc node "$id" --state fullscreen
+                autEnd ;;
+            tiled )
+                autInit
+                id="${id%% *}"
+                bspc node "$id" --state tiled
+                autEnd ;;
+            float )
+                autInit
+                id="${id%% *}"
+                bspc node "$id" --state floating
+                autEnd ;;
+            close )
+                autInit
+                id="${id%% *}"
+                bspc node "$id" --close
+                autEnd ;;
+        esac ;;
+esac
