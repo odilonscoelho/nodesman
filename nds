@@ -1,9 +1,9 @@
-#!/usr/bin/dash
+#!/usr/bin/sh
 #
-node_id_yad ()
+window ()
 {
     # Caso a janela do yad esteja aberta não inicia uma nova;
-    [ -e $tmpdir/yad_selection ] && return 0
+    [ -e $tmpdir/window_line_selected ] && return 0
 
     Transmissiongtk="#28292E"   ;   Gcolor2="#E9B435"           ;       mpv="#A41A97"           ;    gl="#A41A97" 
     Googlechrome="#E7C306"      ;     kitty="#774321"           ;       qt5ct="#3FC74F"         ;   Lxappearance="#3FC74F" 
@@ -15,22 +15,23 @@ node_id_yad ()
     firefox_icon=" "          ; pulseaudioequalizergtk_icon="蓼" ;       Nitrogen_icon=" "       ;     Steam_icon=" "
     nemo_icon=" "             ;        Nemo_icon=" "            ;         Nm_icon=" "           ;     Nvidia_icon="" 
     qt5ct_icon=" "            ;    Lxappearance_icon=" "        ;    TelegramDesktop_icon=" "   ;     mpv_icon=" "
-    Xviewer_icon=" "          ;     csgo_linux64_icon="𥳐"       ; SimpleScreenRecorder_icon=" " ;     Gcolor2_icon=" "
+    Xviewer_icon=" "          ;     csgo_linux64_icon="𥳐"       ; SimpleScreenRecorder_icon=" " ;     Gcolor2_icon=" "
     Yad_icon=" "              ;      Gucharmap_icon=" "         ;       Thunderbird_icon=" "    ;     default_icon=" "
     Pavucontrol_icon="蓼"
 
     # Valores aproximados, casa com meu tema de ícones, dependendo do tema que usar
     # vai ficar estranho, só testando pra ver;
+    # Resoluções testadas 720p 1080p
     case $(< $tmpdir/index wc -l) in
         1 ) height=78 ;;        2 ) height=130 ;;        3 ) height=146 ;;       4 ) height=174 ;;
         5 ) height=200 ;;       6 ) height=228 ;;        7 ) height=258 ;;       8 ) height=282 ;;
-        9 ) height=310 ;;       * ) height=720 ;;
+        9 ) height=310 ;;       * ) height=342 ;;
     esac
 
     # Para contornar erro chato do gtk
     exec 2>/dev/null 
     # Para redirecionar as informações da linha selecionada, --selected-action
-    exec 1>$tmpdir/yad_selection
+    exec 1>$tmpdir/window_line_selected
     
     while read line 
     do 
@@ -42,9 +43,7 @@ node_id_yad ()
         hd="${line#*|*|*|}" ; hd="${hd%|*}"
         st="${line##*|}"
         eval foreground=\$$pg
-
         printf '%s\n' "$id" "$icon" "$pg" "$wk" "$hd" "$st" "${foreground:-#ffffff}"
-
     done < $tmpdir/index | \
         yad                                                  \
             --close-on-unfocus                               \
@@ -71,14 +70,12 @@ node_id_yad ()
                 --column "  "                  \
                 --column @fore@                 \
                 --search-column=3               \
-                --grid-lines both               \
                 --separator="|"                 \
                 --expand-column=3               \
-                --select-action="echo %s"
+                --select-action='echo %s'
 
     exec 1>&-
     exec 2>&-
-
 }
 #
 start () 
@@ -105,33 +102,38 @@ start ()
             sleep $interval
             continue
         fi
-        # Se passou pela condição anterior é porque houve alterações
         # exclui os arquivos que serão concatenados para gerar o index;
         rm \
             $tmpdir/ids_nodes $tmpdir/desktops $tmpdir/class_names $tmpdir/hidden_status \
-            $tmpdir/index $tmpdir/ids_desktops $tmpdir/sticky_status 2>/dev/null
+            $tmpdir/ids_desktops $tmpdir/sticky_status 2>/dev/null
+        # Se passou pela condição anterior é porque houve alterações
         # Gera uma nova base para trabalhar em todos os desktops
         # retira as linhas em branco
         # organiza as informações de cada desktop em uma linha;
         printf '%s\n' "$scopeNew" \
             | sed -E 's/\{|\}|\[|\]|"//g;s/:/\=/g;s/name=/\nname=/g' \
             | sed 's/,$//g' > $tmpdir/scope
-            sed -Ei 's/^$//g' $tmpdir/scope
+        sed -Ei 's/^$//g' $tmpdir/scope
         # Varre o arquivo $tmpdir/scope, e valida as informações :
         # id desktop hidden_status sticky_status de cada janela;
-        while read line 
+        while read desktop 
         do
             # As chaves são diferentes entre as linhas que demonstram infos dos monitores
             # As chaves do json são diferentes entre desktops e monitores
             # A chave retirada abaixo se casar com o case trata-se de um monitor então
             # continue o loop sem separar nada, se for desktop separa a relação dos desktops e ids_nodes;
-            value="${line#*,*,*,*,*,*,*,}" ; value="${value%%,*}" ; value="${value%%=*}"
+            value="${desktop#*,*,*,*,*,*,*,}" ; value="${value%%,*}" ; value="${value%%=*}"
             case $value in
                 focusedDesktopId) continue ;;
-                *) 
-                    eval "${line%%,*}"
-                    for cod in $(printf '%s\n' "$line" |grep -Eo 'id=\w+?')
+                *)
+                    # Gera a variável $name com o nome do desktop
+                    eval "${desktop%%,*}"
+                    # Varre os ids que estão alocados no desktop
+                    for cod in $(printf '%s\n' "$desktop" |grep -Eo 'id=\w+?')
                     do 
+                        # Valida o padrão do id atribuido ao node, se for de 
+                        # desktop continua o loop, se não grava a posição do 
+                        # $name e do id do node em desktops e ids_nodes
                         case "${cod##*=}" in 
                             [0-9][0-9][0-9][0-9][0-9][0-9][0-9]) continue ;;
                             [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) 
@@ -139,24 +141,17 @@ start ()
                                 printf '%s\n' "${cod##*=}" >> $tmpdir/ids_nodes ;;
                         esac
                     done
-                    for class in $(printf '%s\n' "$line" | grep -Eo 'className=\w+?')
-                    do 
-                        printf '%s\n' "${class##*=}" >> $tmpdir/class_names
-                    done ;;
             esac
         done < $tmpdir/scope
-        # Varre o arquivo $tmpdir/ids_nodes, pelos ids dos nodes é possível
-        # capturar as infos de cada node aberto, verificar se é possível retirar os
-        # status sticky pela base scopeNew;
-        while read nodeId 
-        do
-            bspc query --tree --node $nodeId > $tmpdir/temp_file
-            grep -Eo 'hidden\":\w+?' $tmpdir/temp_file > $tmpdir/temp_file2
-            cut -d ':' -f 2 < $tmpdir/temp_file2 >> $tmpdir/hidden_status
-            grep -Eo 'sticky\":\w+?' $tmpdir/temp_file > $tmpdir/temp_file2
-            cut -d ':' -f 2 < $tmpdir/temp_file2 >> $tmpdir/sticky_status
-        done < $tmpdir/ids_nodes 
-        rm $tmpdir/temp_{file,file2} 2>/dev/null
+        # Vamos tentar simplificar
+        < $tmpdir/ids_nodes xargs -i "${SHELL}" -c "bspc query --tree --node {}" > $tmpdir/infos_nodes
+        while read infos 
+        do 
+            hidden="${infos#*\"hidden\":}"          ; printf '%s\n' "${hidden%%,*}" >> $tmpdir/hidden_status
+            sticky="${infos#*\"sticky\":}"          ; printf '%s\n' "${sticky%%,*}" >> $tmpdir/sticky_status
+            className="${infos#*\"className\":\"}"  ; printf '%s\n' "${className%%\",*}" >> $tmpdir/class_names
+            unset hidden sticky className
+        done < $tmpdir/infos_nodes
         # Concatena os arquivos base > index
         paste -d "|"                 \
             $tmpdir/ids_nodes        \
@@ -167,7 +162,6 @@ start ()
         # Limpa a variável de comparação e aguarda o intervalo definido para novo 
         # ciclo;
         scopeOld=$scopeNew          ; sleep $interval
-
     done
 }
 #
@@ -182,13 +176,13 @@ stop ()
 autInit () 
 {
     bspc node "${YAD_XID}" --close
-    id=$(tail -1 $tmpdir/yad_selection)
+    id=$(tail -1 $tmpdir/window_line_selected)
 }
 autEnd ()
 {
     sleep $interval
-    sleep $interval
-    rm $tmpdir/yad_selection
+    sleep 0.2
+    rm $tmpdir/window_line_selected
     $0 f
 }
 # Um diretório no tmp para os arquivos temporários;
@@ -202,7 +196,7 @@ pid_backend=$tmpdir/pid_backend
 scopeOld=""
 # Intervalo entre as comparações para verificar alterações;
 interval="0.25"
-# Para chamar o script apenas pelo nome para abrir o yad_selection
+# Para chamar o script apenas pelo nome para abrir o window_line_selected
 [ -z "$1" ] && set f
 # Valida os parâmetros passados aos script, criar um help;
 case "$1" in
@@ -218,18 +212,18 @@ case "$1" in
     * ) 
         case "$1" in 
             focus|f ) 
-                node_id_yad
-                base=$(tail -1 $tmpdir/yad_selection)
+                window
+                base=$(tail -1 $tmpdir/window_line_selected)
                 id="${base%%|*}"
                 hidden=${base#*|*|*|*|} ; hidden=${hidden%%|*}
                 case $hidden in 
                    true ) 
                        bspc node "$id" --flag hidden=off 
-                       bspc node "$id" --focus ;;
-                 
+                       bspc node "$id" --focus 
+                       bspc node "$id" --activate ;;
                    false ) bspc node "$id" --focus ;;
                 esac
-                rm $tmpdir/yad_selection ;;
+                rm $tmpdir/window_line_selected ;;
             hide )
                 autInit
                 hidden="${id#* * * * * }" ; hidden="${hidden%% *}"
@@ -238,7 +232,8 @@ case "$1" in
                    false ) bspc node "$id" --flag hidden=on ;;                 
                    true )
                        bspc node "$id" --flag hidden=off
-                       bspc node "$id" --focus ;;
+                       bspc node "$id" --focus 
+                       bspc node "$id" --activate ;;
                 esac
                 autEnd ;;
             sticky )
